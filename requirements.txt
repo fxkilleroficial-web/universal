@@ -1,0 +1,14 @@
+requests
+httpx
+flask
+flask-cors
+cachetools
+pillow
+protobuf
+pycryptodome
+flask-caching
+colorama
+protobuf-decoder
+pyjwt
+
+
