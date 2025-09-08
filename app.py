@@ -517,7 +517,152 @@ def getgallery(input_json):
 
     extract_target_ids(input_json)
     return output
+def geteventinfo(input_json):
+    output = {
+        "Credit": "@scvirtual",
+        "Region": "BR",
+        "events": []
+    }
 
+    # Dicionário temporário para agrupar eventos pelo título
+    events_by_title = {}
+
+    # Processa eventos da Seção "1" (eventos normais)
+    if "1" in input_json and "data" in input_json["1"]:
+        if "1" in input_json["1"]["data"]:
+            for item in input_json["1"]["data"]["1"]:
+                if "data" not in item:
+                    continue
+
+                data = item["data"]
+
+                # Verifica se a região é BR
+                if "12" not in data or data["12"].get("data") != "BR":
+                    continue
+
+                # Extrai os dados básicos do evento
+                title = data.get("3", {}).get("data", "")
+                description = data.get("9", {}).get("data", "")
+                image = data.get("5", {}).get("data", "")
+                link = data.get("20", {}).get("data", data.get("8", {}).get("data", ""))
+
+                # Pula se não tiver título
+                if not title:
+                    continue
+
+                # Converte os timestamps para datas
+                start_timestamp = data.get("10", {}).get("data") if "10" in data and data["10"]["wire_type"] == "varint" else None
+                end_timestamp = data.get("11", {}).get("data") if "11" in data and data["11"]["wire_type"] == "varint" else None
+
+                # Se o título já existe no dicionário, mescla as datas
+                if title in events_by_title:
+                    existing_event = events_by_title[title]
+
+                    if start_timestamp and (existing_event["start_timestamp"] is None or start_timestamp < existing_event["start_timestamp"]):
+                        existing_event["start_timestamp"] = start_timestamp
+
+                    if end_timestamp and (existing_event["end_timestamp"] is None or end_timestamp > existing_event["end_timestamp"]):
+                        existing_event["end_timestamp"] = end_timestamp
+
+                    if not existing_event["description"] and description:
+                        existing_event["description"] = description
+                    if not existing_event["link"] and link:
+                        existing_event["link"] = link
+                    if not existing_event["image"] and image:
+                        existing_event["image"] = image
+                else:
+                    events_by_title[title] = {
+                        "title": title,
+                        "start_timestamp": start_timestamp,
+                        "end_timestamp": end_timestamp,
+                        "description": description,
+                        "link": link,
+                        "image": image
+                    }
+
+    # Processa eventos da Seção "2" (promoções)
+    if "2" in input_json and "data" in input_json["2"]:
+        if "1" in input_json["2"]["data"]:
+            for item in input_json["2"]["data"]["1"]:
+                if "data" not in item:
+                    continue
+
+                data = item["data"]
+
+                # Verifica se a região é BR
+                if "1" not in data or data["1"].get("data") != "BR":
+                    continue
+
+                # Extrai os dados da promoção (tratando como um evento normal)
+                title = data.get("4", {}).get("data", "")
+                image = data.get("14", {}).get("data", "")
+                start_timestamp = data.get("6", {}).get("data") if "6" in data and data["6"]["wire_type"] == "varint" else None
+                end_timestamp = data.get("7", {}).get("data") if "7" in data and data["7"]["wire_type"] == "varint" else None
+
+                # Se for uma promoção de diamantes, ajusta o título para ficar mais amigável
+                if "[REVENUE]" in title:
+                    title = title.replace("[REVENUE]", "").strip()
+                elif "[PRODUCT]" in title:
+                    title = title.replace("[PRODUCT]", "").strip()
+
+                if not title:
+                    continue
+
+                # Se o título já existe, mescla (caso contrário, adiciona como novo evento)
+                if title in events_by_title:
+                    existing_event = events_by_title[title]
+
+                    if start_timestamp and (existing_event["start_timestamp"] is None or start_timestamp < existing_event["start_timestamp"]):
+                        existing_event["start_timestamp"] = start_timestamp
+
+                    if end_timestamp and (existing_event["end_timestamp"] is None or end_timestamp > existing_event["end_timestamp"]):
+                        existing_event["end_timestamp"] = end_timestamp
+
+                    if not existing_event["image"] and image:
+                        existing_event["image"] = image
+                else:
+                    events_by_title[title] = {
+                        "title": title,
+                        "start_timestamp": start_timestamp,
+                        "end_timestamp": end_timestamp,
+                        "description": "",  # Promoções geralmente não têm descrição
+                        "link": "",  # Promoções geralmente não têm link externo
+                        "image": image
+                    }
+
+    # Agora processa todos os eventos (Seção 1 + Seção 2) para criar a saída final
+    now = datetime.now().timestamp()
+
+    for title, event_data in events_by_title.items():
+        # Formata as datas
+        start = datetime.utcfromtimestamp(event_data["start_timestamp"]).strftime('%Y-%m-%d %H:%M:%S') if event_data["start_timestamp"] else ""
+        end = datetime.utcfromtimestamp(event_data["end_timestamp"]).strftime('%Y-%m-%d %H:%M:%S') if event_data["end_timestamp"] else ""
+
+        # Determina o status
+        status = "Por vir"
+        if event_data["start_timestamp"] and event_data["end_timestamp"]:
+            if now >= event_data["start_timestamp"] and now <= event_data["end_timestamp"]:
+                status = "Ativo"
+            elif now > event_data["end_timestamp"]:
+                status = "Encerrado"
+
+        output["events"].append({
+            "Tittle": title,
+            "start": start,
+            "end": end,
+            "description": event_data["description"],
+            "source": event_data["image"],
+            "link": event_data["link"],
+            "status": status
+        })
+
+    # Ordena os eventos por data de início
+    output["events"].sort(
+        key=lambda x: datetime.strptime(x["start"], '%Y-%m-%d %H:%M:%S') if x["start"] else datetime.min,
+        reverse=True
+    )
+
+    return output
 def updwish(input_json):
     output = {
         "credits": "@scvirtual",
@@ -1057,7 +1202,7 @@ def get_player_info():
                 hex_response = binascii.hexlify(response.content).decode('utf-8')
                 json_result = get_available_room(hex_response)
                 parsed_data = json.loads(json_result)
-                transformed_data = transform_json(parsed_data)
+                transformed_data = geteventinfo(parsed_data)
                 return jsonify(transformed_data)
             except Exception as hex_error:
                 return jsonify({
