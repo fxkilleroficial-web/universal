@@ -10,5 +10,6 @@ flask-caching
 colorama
 protobuf-decoder
 pyjwt
+gunicorn
 
 
