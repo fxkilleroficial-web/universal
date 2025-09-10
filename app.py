@@ -1475,29 +1475,30 @@ def updwishlistinfo():
             "credits": "@scvirtual",
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }), 500
-@app.route('/img_wish', methods=['GET'])
-def generate_image():
+
+@app.route('/getimgid', methods=['GET'])
+def genimg():
     try:
-        # Validate parameters
-        uid = request.args.get('uid')
+        # Get parameters
+        ids_param = request.args.get('ids')
         region = request.args.get('region', 'br')
         
-        if not uid:
-            return Response("UID is required", status=400, mimetype='text/plain')
+        if not ids_param:
+            return Response("IDs parameter is required", status=400, mimetype='text/plain')
 
-        # Fetch item IDs
-        item_ids = fetch_item_ids(uid, region)
+        # Split IDs by comma and clean up
+        item_ids = [id.strip() for id in ids_param.split(',') if id.strip()]
         if not item_ids:
-            return Response("No items found", status=404, mimetype='text/plain')
+            return Response("No valid IDs provided", status=400, mimetype='text/plain')
 
         # Process images concurrently
         with tempfile.TemporaryDirectory() as img_dir:
-            images = download_images_concurrently(item_ids, img_dir)
+            images = downliad(item_ids, img_dir)
             if not images:
                 return Response("No valid images found", status=404, mimetype='text/plain')
 
             # Create composite image
-            composite_image = create_composite_image(images)
+            composite_image = craetioon(images)
             
             # Return the image
             img_io = io.BytesIO()
@@ -1510,22 +1511,13 @@ def generate_image():
         print(f"Error in generate_image: {str(e)}")
         return Response("Internal Server Error", status=500, mimetype='text/plain')
 
-def fetch_item_ids(uid, region):
-    url = f"https://wishlist-nine-alpha.vercel.app/get-wishlist?id={uid}"
-    try:
-        response = requests.get(url, timeout=TIMEOUT)
-        if response.status_code == 200:
-            data = response.json()
-            return [item['itemId'] for item in data.get('items', [])]
-        return []
-    except requests.RequestException:
-        return []
 
-def download_images_concurrently(item_ids, img_dir):
+def downliad(item_ids, img_dir):
     images = []
     
     def download_single_image(item_id):
         try:
+            # Primeira tentativa - getimage-omega
             image_url = f"https://get-image-vert.vercel.app/get_image?id={item_id}"
             response = requests.get(image_url, stream=True, timeout=TIMEOUT)
             
@@ -1535,8 +1527,23 @@ def download_images_concurrently(item_ids, img_dir):
                     for chunk in response.iter_content(1024):
                         f.write(chunk)
                 return {"path": image_path, "name": f"{item_id}.png"}
-        except:
-            return None
+            
+            # Segunda tentativa - advimage (se a primeira falhou)
+            image_url = f"https://advapi-dun.vercel.app/get_image?id={item_id}"
+            response = requests.get(image_url, stream=True, timeout=TIMEOUT)
+            
+            if response.status_code == 200 and 'image' in response.headers.get('Content-Type', ''):
+                image_path = os.path.join(img_dir, f"{item_id}.png")
+                with open(image_path, 'wb') as f:
+                    for chunk in response.iter_content(1024):
+                        f.write(chunk)
+                return {"path": image_path, "name": f"{item_id}.png"}
+                
+        except requests.exceptions.RequestException as e:
+            print(f"Error downloading image {item_id}: {str(e)}")
+        except Exception as e:
+            print(f"Unexpected error with image {item_id}: {str(e)}")
+        return None
     
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = [executor.submit(download_single_image, item_id) for item_id in item_ids]
@@ -1547,7 +1554,45 @@ def download_images_concurrently(item_ids, img_dir):
     
     return images
 
-def create_composite_image(images):
+def craetioon(images):
+    # Caso especial: apenas uma imagem (tratamento como no PHP)
+    if len(images) == 1:
+        # Tamanho maior para imagem única (900x900 como no PHP)
+        SINGLE_WIDTH, SINGLE_HEIGHT = 900, 900
+        
+        try:
+            image = images[0]
+            output_image = Image.new('RGB', (SINGLE_WIDTH, SINGLE_HEIGHT), (10, 10, 30))
+            
+            # Carregar fundo baseado na raridade (equivalente ao PHP)
+            bg_path = get_background_path(image["name"])
+            if os.path.exists(bg_path):
+                with Image.open(bg_path) as bg_image:
+                    bg_image = bg_image.resize((SINGLE_WIDTH, SINGLE_HEIGHT))
+                    output_image.paste(bg_image, (0, 0))
+            
+            # Carregar e posicionar a imagem principal (50% do espaço como no PHP)
+            with Image.open(image["path"]).convert("RGBA") as icon_image:
+                target_width = SINGLE_WIDTH * 0.5
+                target_height = SINGLE_HEIGHT * 0.5
+                
+                ratio = min(target_width/icon_image.width, target_height/icon_image.height)
+                new_size = (int(icon_image.width * ratio), int(icon_image.height * ratio))
+                icon_image = icon_image.resize(new_size, Image.Resampling.LANCZOS)
+                
+                pos = (
+                    (SINGLE_WIDTH - new_size[0]) // 2,
+                    (SINGLE_HEIGHT - new_size[1]) // 2
+                )
+                output_image.paste(icon_image, pos, icon_image)
+            
+            return output_image
+            
+        except Exception as e:
+            print(f"Error processing single image {image['name']}: {str(e)}")
+            # Se falhar, continua para o processamento normal abaixo
+
+    # Processamento normal para múltiplas imagens (mantendo seu código original)
     width, height = IMAGE_SIZE
     rows = (len(images) + COLUMNS - 1) // COLUMNS
     image_width = COLUMNS * (width + PADDING) - PADDING
@@ -1613,7 +1658,6 @@ def get_background_path(image_name):
     except Exception as e:
         print(f"Erro ao consultar o PHP: {e}")
         return default_bg
-
 @app.route('/get-galery', methods=['GET'])
 def getgalleryinfo():
     try:
